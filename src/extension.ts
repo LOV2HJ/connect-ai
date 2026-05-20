@@ -5648,6 +5648,8 @@ function readAgentSharedContext(agentId: string, opts?: { lean?: boolean }): str
   try {
     const skillsBlock = readAgentSkills(agentId, lean ? 1500 : 4000);
     if (skillsBlock) ctx += skillsBlock;
+    const globalLocalSkillsBlock = readGlobalAndLocalSkills(lean ? 1500 : 4000);
+    if (globalLocalSkillsBlock) ctx += globalLocalSkillsBlock;
   } catch { /* never break the prompt */ }
   /* v2.89.115 — 템플릿 (재사용 빌딩블록). 두뇌의 40_템플릿/<id>/ 폴더.
      스킬보다 더 무거운 자료(코드·파일·문서) — 매니페스트만 inject, 실제 파일은
@@ -5854,6 +5856,42 @@ function readAgentSkills(agentId: string, maxChars = 4000): string {
   if (blocks.length === 0) return '';
   return `\n\n[${AGENTS[agentId]?.name} 검증된 스킬 (사용자가 패턴으로 승격한 항목 — 가능하면 이 패턴을 따르세요)]\n${blocks.join('\n\n---\n\n')}`;
 }
+
+function readGlobalAndLocalSkills(maxChars = 4000): string {
+  const dirs = [
+    path.join(os.homedir(), '.agents', 'skills')
+  ];
+  if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+    dirs.push(path.join(vscode.workspace.workspaceFolders[0].uri.fsPath, '.agents', 'skills'));
+  }
+  
+  const blocks: string[] = [];
+  let used = 0;
+  
+  for (const root of dirs) {
+    if (!fs.existsSync(root)) continue;
+    try {
+      const skillsDirs = fs.readdirSync(root, { withFileTypes: true });
+      for (const ent of skillsDirs) {
+        if (!ent.isDirectory()) continue;
+        const skillPath = path.join(root, ent.name);
+        const mdFiles = fs.readdirSync(skillPath).filter(f => f.endsWith('.md'));
+        for (const f of mdFiles) {
+          if (used >= maxChars) break;
+          const body = _safeReadText(path.join(skillPath, f)).trim();
+          if (!body) continue;
+          const block = body.slice(0, Math.max(200, maxChars - used));
+          blocks.push(`## 스킬: ${ent.name}/${f}\n\n${block}`);
+          used += block.length;
+        }
+      }
+    } catch { /* ignore */ }
+  }
+  
+  if (blocks.length === 0) return '';
+  return `\n\n[글로벌 및 로컬에 설치된 스킬 (Agent Skills)]\n이 스킬들은 사용자 작업 공간에 설치된 외부 스킬들입니다. 유용하게 사용하세요.\n${blocks.join('\n\n---\n\n')}`;
+}
+
 
 /** Find the most recent specialist output in today's conversation log.
  *  Returns the agent id + body so the user can say `/skill` and we know
